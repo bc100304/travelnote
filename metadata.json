@@ -1,0 +1,6 @@
+{
+  "name": "旅遊公費記帳簿",
+  "description": "專為多人旅遊設計的單頁式公費記帳簿，支援即時統計看板、無條件進位均攤、GPS/地點打卡、Google Maps 連結自動生成，並可非同步寫入 Google Sheet (GAS)。",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
