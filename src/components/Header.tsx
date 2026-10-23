@@ -9,12 +9,16 @@ import {
   Plane, 
   Calendar, 
   Users,
-  Share2
+  Share2,
+  RefreshCw
 } from 'lucide-react';
 import { TripSettings } from '../types';
 
 interface HeaderProps {
   settings: TripSettings;
+  isSyncing?: boolean;
+  lastSyncTime?: string | null;
+  onSync: () => void;
   onOpenSettings: () => void;
   onOpenGasModal: () => void;
   onOpenBackupModal: () => void;
@@ -24,6 +28,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   settings,
+  isSyncing = false,
+  lastSyncTime,
+  onSync,
   onOpenSettings,
   onOpenGasModal,
   onOpenBackupModal,
@@ -103,49 +110,72 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* 右側操作快捷按鈕 (桌機顯示，手機精簡以突顯基本資料) */}
-          <div className="hidden sm:flex items-center flex-wrap gap-2">
+          {/* 右側操作按鈕區 */}
+          <div className="flex items-center space-x-2 self-end sm:self-auto">
+            {/* 核心：同步 / 重新整理按鈕 (多手機即時拉取最新資料) */}
             <button
-              onClick={onOpenShareModal}
-              className="px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
-              title="分享此記帳簿網址給旅伴"
+              onClick={onSync}
+              disabled={isSyncing}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer border ${
+                isSyncing
+                  ? 'bg-blue-50 text-blue-400 border-blue-200 cursor-wait'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 active:scale-95'
+              }`}
+              title="從 Google Sheet 重新整理讀取最新打卡與金額"
             >
-              <Share2 className="w-4 h-4 text-indigo-600" />
-              <span>分享記帳簿網址</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? '同步中...' : '同步/重新整理'}</span>
+              {lastSyncTime && !isSyncing && (
+                <span className="hidden md:inline text-[10px] font-normal opacity-80 pl-1 font-mono">
+                  ({lastSyncTime})
+                </span>
+              )}
             </button>
 
-            <button
-              onClick={onOpenGasModal}
-              className="px-3 py-1.5 rounded-xl border border-blue-200 bg-blue-50/70 hover:bg-blue-100/80 text-blue-700 font-semibold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
-            >
-              <FileCode2 className="w-4 h-4" />
-              <span>GAS 程式碼與教學</span>
-            </button>
+            {/* 桌機專屬快捷按鈕 */}
+            <div className="hidden sm:flex items-center space-x-2">
+              <button
+                onClick={onOpenShareModal}
+                className="px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="分享此記帳簿網址給旅伴"
+              >
+                <Share2 className="w-4 h-4 text-indigo-600" />
+                <span>分享</span>
+              </button>
 
-            <button
-              onClick={onDownloadStandalone}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
-              title="匯出成可離線在瀏覽器雙擊開啟執行的單一 HTML 檔案"
-            >
-              <Download className="w-4 h-4 text-indigo-600" />
-              <span>下載單檔 index.html</span>
-            </button>
+              <button
+                onClick={onOpenGasModal}
+                className="px-3 py-1.5 rounded-xl border border-blue-200 bg-blue-50/70 hover:bg-blue-100/80 text-blue-700 font-semibold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <FileCode2 className="w-4 h-4" />
+                <span>GAS 教學</span>
+              </button>
 
-            <button
-              onClick={onOpenBackupModal}
-              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
-              title="備份 / 匯出 CSV / 匯入資料"
-            >
-              <Database className="w-4 h-4" />
-            </button>
+              <button
+                onClick={onDownloadStandalone}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs sm:text-sm flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="匯出成可離線在瀏覽器雙擊開啟執行的單一 HTML 檔案"
+              >
+                <Download className="w-4 h-4 text-indigo-600" />
+                <span>下載單檔</span>
+              </button>
 
-            <button
-              onClick={onOpenSettings}
-              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
-              title="設定旅遊資訊與人數"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+              <button
+                onClick={onOpenBackupModal}
+                className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                title="備份 / 匯出 CSV / 匯入資料"
+              >
+                <Database className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={onOpenSettings}
+                className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                title="設定旅遊資訊與人數"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
         </div>

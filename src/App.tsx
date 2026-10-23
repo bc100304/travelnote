@@ -11,7 +11,7 @@ import { BackupModal } from './components/BackupModal';
 import { ShareModal } from './components/ShareModal';
 import { ExpenseRecord, TripSettings } from './types';
 import { SAMPLE_RECORDS } from './utils/sampleData';
-import { syncRecordToGas } from './utils/gasScript';
+import { syncRecordToGas, fetchFromGas, deleteRecordFromGas } from './utils/gasScript';
 import { generateStandaloneHtml } from './utils/standaloneHtmlGenerator';
 import { parseSettingsFromUrl } from './utils/shareHelper';
 import { ArrowRight, Receipt, CheckCircle, ExternalLink, Sparkles } from 'lucide-react';
@@ -56,6 +56,10 @@ export default function App() {
     return SAMPLE_RECORDS;
   });
 
+  // 同步狀態
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+
   // Modals 控制開關
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
@@ -72,8 +76,51 @@ export default function App() {
     }, 4000);
   };
 
-  // 首次載入時檢查網址是否有旅伴分享的行程與 GAS 參數
+  // 從 Google Apps Script 中央資料庫同步全體資料與設定
+  const handleSyncFromGas = async (overrideUrl?: string, silent = false) => {
+    const targetUrl = (overrideUrl || settings.gasApiUrl || '').trim();
+    if (!targetUrl || !targetUrl.startsWith('http')) {
+      if (!silent) {
+        showToast('請先於「資料設定」輸入有效的 Google Apps Script 網址', 'error');
+        setActiveTab('settings');
+      }
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const res = await fetchFromGas(targetUrl);
+      if (res.success && res.records) {
+        setRecords(res.records);
+        if (res.settings) {
+          setSettings((prev) => ({
+            ...prev,
+            tripName: res.settings?.tripName || prev.tripName,
+            totalPeople: res.settings?.totalPeople || prev.totalPeople,
+            defaultPayer: res.settings?.defaultPayer || prev.defaultPayer,
+          }));
+        }
+        const now = new Date();
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        setLastSyncTime(timeStr);
+        if (!silent) {
+          showToast(`☁️ 已同步 Google Sheet 最新資料 (${res.records.length} 筆)！`, 'success');
+        }
+      } else {
+        if (!silent) {
+          showToast(res.message || '讀取 Google Sheet 失敗', 'error');
+        }
+      }
+    } catch (err: any) {
+      if (!silent) showToast(`同步失敗: ${err.message}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 首次載入時檢查網址是否有旅伴分享的行程與 GAS 參數，並自動向 GAS 拉取中央資料
   useEffect(() => {
+    let effectiveGasUrl = settings.gasApiUrl;
     const urlSettings = parseSettingsFromUrl();
     if (urlSettings) {
       setSettings((prev) => ({
@@ -81,10 +128,18 @@ export default function App() {
         ...urlSettings,
         payersList: urlSettings.payersList && urlSettings.payersList.length > 0 ? urlSettings.payersList : prev.payersList,
       }));
+      if (urlSettings.gasApiUrl) {
+        effectiveGasUrl = urlSettings.gasApiUrl;
+      }
       showToast(
-        `🎉 已自動載入「${urlSettings.tripName || '旅遊公費'}」行程資料與 Google Sheet 串接！`,
+        `🎉 已載入「${urlSettings.tripName || '旅遊公費'}」行程參數！`,
         'success'
       );
+    }
+
+    // 若有設定 GAS 網址，頁面一開啟時自動發送 API 請求從 Google Sheet 載入所有歷程資料
+    if (effectiveGasUrl && effectiveGasUrl.trim().startsWith('http')) {
+      handleSyncFromGas(effectiveGasUrl, true);
     }
   }, []);
 
@@ -139,6 +194,10 @@ export default function App() {
         );
         if (result.success) {
           showToast(`☁️ 已成功同步寫入 Google 試算表！`, 'success');
+          // 短暫延遲後從 Google Sheet 重新整理，確保全欄位與順序完全與雲端同步
+          setTimeout(() => {
+            handleSyncFromGas(settings.gasApiUrl, true);
+          }, 1200);
         } else {
           showToast(`⚠️ 寫入 Google 試算表失敗：${result.message}`, 'error');
         }
@@ -185,10 +244,27 @@ export default function App() {
     }
   };
 
-  // 刪除打卡紀錄
-  const handleDeleteRecord = (id: string) => {
+  // 刪除打卡紀錄 (支援向 Google Sheet 發送刪除請求)
+  const handleDeleteRecord = async (id: string) => {
+    if (!window.confirm('確定要刪除這筆打卡記帳嗎？')) return;
+
+    // 1. 本地樂觀移除
     setRecords((prev) => prev.filter((r) => r.id !== id));
     showToast('已刪除打卡紀錄', 'info');
+
+    // 2. 若有設定 GAS，向雲端發送刪除指令
+    if (settings.gasApiUrl && settings.gasApiUrl.trim().startsWith('http')) {
+      try {
+        await deleteRecordFromGas(id, settings.gasApiUrl);
+        showToast('☁️ 已從 Google 試算表同步刪除！', 'success');
+        // 重新同步拉取最新資料
+        setTimeout(() => {
+          handleSyncFromGas(settings.gasApiUrl, true);
+        }, 1200);
+      } catch (err: any) {
+        console.warn('GAS Delete error', err);
+      }
+    }
   };
 
   // 下載免伺服器雙擊直接執行的單一 HTML 檔案
@@ -213,9 +289,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50/90 text-slate-800 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
       
-      {/* 頂部導航列 (提供旅遊名稱、日期、人數等基本資料，並提供分享按鈕) */}
+      {/* 頂部導航列 (提供旅遊名稱、日期、人數等基本資料，並提供同步/重新整理按鈕) */}
       <Header
         settings={settings}
+        isSyncing={isSyncing}
+        lastSyncTime={lastSyncTime}
+        onSync={() => handleSyncFromGas()}
         onOpenSettings={() => setActiveTab('settings')}
         onOpenGasModal={() => setIsGasModalOpen(true)}
         onOpenBackupModal={() => setIsBackupModalOpen(true)}

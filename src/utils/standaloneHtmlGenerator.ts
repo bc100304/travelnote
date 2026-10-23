@@ -1,9 +1,11 @@
 /**
  * 產生可直接在瀏覽器雙擊開啟執行的單一 index.html 檔案內容
- * 嚴格支援三大功能分頁切換：
- * 功能1：資料設定
- * 功能2：打卡與記錄
- * 功能3：總消費與明細
+ * 完整支援：
+ * 1. Google Sheet 作為中央資料庫的多裝置/多手機即時同步 (doGet 讀取 / doPost 寫入與刪除)
+ * 2. 頂部同步/重新整理按鈕，開頁自動拉取雲端資料
+ * 3. 即時統計看板 (總花費、總筆數、Math.ceil 無條件進位均攤)
+ * 4. GPS 地理位置打卡，無法辨識時顯示「請手動取得GPS定位」，自動生成 Google Maps 連結
+ * 5. 旅伴分享網址產生器與 LINE 分享
  */
 export function generateStandaloneHtml(initialData?: {
   tripName?: string;
@@ -33,39 +35,57 @@ export function generateStandaloneHtml(initialData?: {
       color: #0f172a;
       -webkit-tap-highlight-color: transparent;
     }
+    @keyframes spin-slow {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .animate-spin-custom {
+      animation: spin-slow 1s linear infinite;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-800 pb-20">
 
-  <!-- 頂部導航列 (提供旅遊名稱、日期、人數等基本資料) -->
+  <!-- 頂部導航列 (提供旅遊名稱、人數、GAS 狀態與「同步/重新整理」按鈕) -->
   <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-    <div class="max-w-5xl mx-auto px-4 py-3 sm:py-3.5 flex items-center justify-between">
-      <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md text-xl">
+    <div class="max-w-5xl mx-auto px-4 py-3 sm:py-3.5 flex items-center justify-between gap-2">
+      <div class="flex items-center space-x-3 min-w-0">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md text-xl shrink-0">
           ✈️
         </div>
-        <div>
-          <h1 id="topTripTitle" class="text-base sm:text-lg font-black text-slate-900 tracking-tight leading-tight">
+        <div class="min-w-0">
+          <h1 id="topTripTitle" class="text-base sm:text-lg font-black text-slate-900 tracking-tight leading-tight truncate">
             ${tripName}
           </h1>
-          <div class="flex items-center space-x-2 text-xs text-slate-500 font-medium">
+          <div class="flex items-center space-x-2 text-xs text-slate-500 font-medium truncate">
             <span id="topTravelersCount">${totalPeople} 位旅伴</span>
             <span>•</span>
             <span id="gasStatusBadge" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${gasApiUrl ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">
-              ${gasApiUrl ? '● GAS 已連線' : '○ 本機儲存'}
+              ${gasApiUrl ? '● GAS 雲端連線' : '○ 本機儲存'}
             </span>
           </div>
         </div>
       </div>
-      <button onclick="switchTab('settings')" class="hidden sm:flex px-3 py-1.5 rounded-xl text-slate-700 hover:text-blue-600 hover:bg-slate-100 transition-colors items-center text-xs sm:text-sm font-semibold border border-slate-200">
-        ⚙️ 資料設定
-      </button>
+
+      <!-- 右側：同步按鈕與設定 -->
+      <div class="flex items-center space-x-2 shrink-0">
+        <!-- 核心同步按鈕 -->
+        <button id="syncBtn" onclick="syncWithGoogleSheet()" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer">
+          <span id="syncIcon" class="text-xs">🔄</span>
+          <span id="syncText">同步/重新整理</span>
+          <span id="syncTime" class="hidden md:inline text-[10px] opacity-80 font-mono"></span>
+        </button>
+
+        <button onclick="switchTab('settings')" class="hidden sm:flex px-3 py-1.5 rounded-xl text-slate-700 hover:text-blue-600 hover:bg-slate-100 transition-colors items-center text-xs sm:text-sm font-semibold border border-slate-200">
+          ⚙️ 資料設定
+        </button>
+      </div>
     </div>
   </header>
 
   <main class="max-w-5xl mx-auto px-4 py-4 sm:py-6 space-y-5 sm:space-y-6">
 
-    <!-- 功能切換選單 (總消費與明細在左，打卡與記錄在右) -->
+    <!-- 三大功能切換選單 -->
     <section aria-label="功能分頁切換" class="bg-white rounded-2xl p-1.5 border border-slate-200 shadow-xs">
       <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2">
         <button id="tabBtnSummary" onclick="switchTab('summary')" class="py-2.5 sm:py-3 px-2 sm:px-4 rounded-xl text-center sm:text-left transition-all duration-200 flex flex-col sm:flex-row sm:items-center space-x-0 sm:space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-blue-500/20">
@@ -85,14 +105,14 @@ export function generateStandaloneHtml(initialData?: {
       </div>
     </section>
 
-    <!-- ==================== 資料設定 ==================== -->
+    <!-- ==================== 功能 1：資料設定 ==================== -->
     <section id="viewSettings" class="hidden space-y-5">
       <div class="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-xs space-y-5">
         <div class="flex items-center space-x-2 pb-3 border-b border-slate-100">
           <span class="text-xl">⚙️</span>
           <div>
-            <h2 class="text-base sm:text-lg font-bold text-slate-900">旅遊行程與 Google Sheet 資料設定</h2>
-            <p class="text-xs text-slate-400">設定行程名稱、總分攤人數與 Google Apps Script Web App API</p>
+            <h2 class="text-base sm:text-lg font-bold text-slate-900">Google Sheet 中央資料庫與行程設定</h2>
+            <p class="text-xs text-slate-400">設定中央試算表 API 網址，讓所有旅伴手機即時同步讀寫</p>
           </div>
         </div>
 
@@ -104,25 +124,27 @@ export function generateStandaloneHtml(initialData?: {
           <div>
             <div class="flex items-center justify-between mb-1.5">
               <label class="block text-xs font-bold text-slate-700">旅遊總人數 (分攤計算基礎)</label>
-              <span class="text-[11px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded">無條件進位</span>
+              <span class="text-[11px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded">Math.ceil 無條件進位</span>
             </div>
             <input type="number" id="setTotalPeople" min="1" value="${totalPeople}" class="w-full px-3.5 py-2.5 border rounded-xl text-sm font-bold font-mono">
           </div>
         </div>
 
         <div>
-          <label class="block text-xs font-bold text-slate-700 mb-1.5">Google Sheet Web App API URL</label>
+          <label class="block text-xs font-bold text-slate-700 mb-1.5">Google Sheet Web App API URL (中央資料庫)</label>
           <input type="url" id="setGasUrl" value="${gasApiUrl}" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3.5 py-2.5 border rounded-xl text-xs font-mono">
-          <p class="text-[11px] text-slate-500 mt-1">留空則僅儲存於本機瀏覽器。填入後每筆打卡會自動發送 POST 寫入 Google 試算表最下方。</p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            💡 填入後，不同手機開啟本網址時都會自動從 Google Sheet 載入最新記帳紀錄，並可即時寫入與刪除。
+          </p>
         </div>
 
-        <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+        <div class="pt-3 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
           <button type="button" onclick="loadSampleData()" class="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold">
             ✨ 載入示範資料
           </button>
           <div class="flex items-center space-x-2">
-            <button type="button" onclick="shareTrackerUrl()" class="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold transition-colors">
-              🔗 分享此記帳簿網址
+            <button type="button" onclick="testGasUrlConnection()" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold">
+              🔍 測試連線
             </button>
             <button type="button" onclick="saveSettings()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20">
               儲存設定
@@ -130,15 +152,12 @@ export function generateStandaloneHtml(initialData?: {
           </div>
         </div>
 
-        <!-- 旅遊行程基本資料設定完成後的分享功能區塊 -->
+        <!-- 網址分享給旅伴 -->
         <div id="standaloneShareCard" class="mt-4 p-4 rounded-2xl bg-indigo-50/80 border border-indigo-200 text-xs space-y-2">
           <div class="font-bold text-slate-800 flex items-center justify-between">
             <span class="flex items-center space-x-1.5 text-indigo-900 font-black">
               <span>🔗</span>
-              <span>分享此記帳簿網址給旅伴</span>
-            </span>
-            <span class="text-[10px] text-indigo-700 font-bold bg-white px-2 py-0.5 rounded-full border border-indigo-200">
-              自動套用行程與分攤
+              <span>分享此記帳簿網址給旅伴 (帶行程與 API 參數)</span>
             </span>
           </div>
           <div class="flex items-center space-x-2">
@@ -151,13 +170,13 @@ export function generateStandaloneHtml(initialData?: {
             </button>
           </div>
           <p class="text-[11px] text-slate-500">
-            💡 旅伴點擊連結開啟後，將自動載入此行程名稱、分攤人數與 Google Sheet 試算表串接！
+            旅伴打開此連結後，手機會自動帶入此行程名稱、分攤人數與 Google Sheet 試算表串接！
           </p>
         </div>
       </div>
     </section>
 
-    <!-- ==================== 打卡與記錄 ==================== -->
+    <!-- ==================== 功能 2：打卡與記錄 ==================== -->
     <section id="viewCheckin" class="space-y-5">
       <div class="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200 shadow-xs">
         <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
@@ -165,10 +184,10 @@ export function generateStandaloneHtml(initialData?: {
             <span class="text-xl">📍</span>
             <div>
               <h2 class="text-base sm:text-lg font-bold text-slate-900">新增打卡記帳</h2>
-              <p class="text-xs text-slate-400">支援 GPS 定位打卡，並自動生成 Google Maps 超連結</p>
+              <p class="text-xs text-slate-400">寫入 Google Sheet 中央試算表，支援 GPS 自動打卡與 Google 地圖超連結</p>
             </div>
           </div>
-          <span class="text-xs text-slate-400">即時計算均攤</span>
+          <span class="text-xs text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded">即時同步</span>
         </div>
 
         <form id="expenseForm" onsubmit="handleFormSubmit(event)" class="space-y-4">
@@ -223,7 +242,7 @@ export function generateStandaloneHtml(initialData?: {
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="block text-xs font-bold text-slate-700">打卡地點</label>
-                <button type="button" onclick="fetchCurrentGps()" id="gpsBtn" class="text-xs text-blue-600 hover:text-blue-700 font-bold flex items-center space-x-1">
+                <button type="button" onclick="fetchCurrentGps(false)" id="gpsBtn" class="text-xs text-blue-600 hover:text-blue-700 font-bold flex items-center space-x-1 cursor-pointer">
                   <span>🎯 取得 GPS 定位</span>
                 </button>
               </div>
@@ -237,7 +256,7 @@ export function generateStandaloneHtml(initialData?: {
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="block text-xs font-bold text-slate-700">打卡時間</label>
-                <button type="button" onclick="resetToCurrentTime()" class="text-xs text-slate-500 hover:text-blue-600 font-semibold">
+                <button type="button" onclick="resetToCurrentTime()" class="text-xs text-slate-500 hover:text-blue-600 font-semibold cursor-pointer">
                   設為現在
                 </button>
               </div>
@@ -245,7 +264,7 @@ export function generateStandaloneHtml(initialData?: {
             </div>
           </div>
 
-          <!-- 備註 -->
+          <!-- 備註說明 -->
           <div>
             <label class="block text-xs font-bold text-slate-700 mb-1.5">備註說明</label>
             <input type="text" id="itemNotes" placeholder="例如：含四人飲料與服務費、發票放夾層" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
@@ -253,8 +272,8 @@ export function generateStandaloneHtml(initialData?: {
 
           <!-- 送出按鈕 -->
           <div class="pt-2">
-            <button type="submit" id="submitBtn" class="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 hover:from-blue-700 text-white font-bold rounded-xl shadow-md transition-all active:scale-[0.99] flex items-center justify-center space-x-2">
-              <span>✨ 新增打卡記帳</span>
+            <button type="submit" id="submitBtn" class="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 hover:from-blue-700 text-white font-bold rounded-xl shadow-md transition-all active:scale-[0.99] flex items-center justify-center space-x-2 cursor-pointer">
+              <span>✨ 新增打卡記帳並寫入雲端</span>
             </button>
           </div>
         </form>
@@ -262,11 +281,14 @@ export function generateStandaloneHtml(initialData?: {
     </section>
 
     <!-- ==================== 功能 3：總消費與明細 ==================== -->
-    <section id="viewSummary" class="hidden space-y-6">
-      <!-- 即時統計看板 -->
+    <section id="viewSummary" class="space-y-6">
+      <!-- 即時統計看板 (總花費、總筆數、Math.ceil 無條件進位均攤) -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <div class="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-blue-500/10">
-          <div class="text-blue-100 text-xs font-semibold uppercase tracking-wider mb-1">目前累積總花費</div>
+          <div class="flex items-center justify-between text-blue-100 text-xs font-semibold uppercase tracking-wider mb-1">
+            <span>目前累積總花費</span>
+            <span id="statTotalRecords" class="bg-blue-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">共 0 筆</span>
+          </div>
           <div class="flex items-baseline space-x-1.5">
             <span class="text-sm font-bold text-blue-200">NT$</span>
             <span id="statTotalExpense" class="text-3xl sm:text-4xl font-black tracking-tight font-mono">0</span>
@@ -277,7 +299,7 @@ export function generateStandaloneHtml(initialData?: {
         <div class="bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-teal-500/10">
           <div class="flex items-center justify-between text-emerald-100 text-xs font-semibold uppercase tracking-wider mb-1">
             <span>每人平均應分攤金額</span>
-            <span class="bg-white/20 px-1.5 py-0.5 rounded text-[10px] font-bold text-white">無條件進位</span>
+            <span class="bg-white/20 px-1.5 py-0.5 rounded text-[10px] font-bold text-white">Math.ceil 無條件進位</span>
           </div>
           <div class="flex items-baseline space-x-1.5">
             <span class="text-sm font-bold text-emerald-200">NT$</span>
@@ -312,7 +334,7 @@ export function generateStandaloneHtml(initialData?: {
 
   <script>
     // 狀態管理
-    let currentTab = 'checkin';
+    let currentTab = 'summary';
     let appSettings = {
       tripName: localStorage.getItem('trip_name') || '${tripName}',
       totalPeople: Number(localStorage.getItem('trip_people')) || ${totalPeople},
@@ -320,6 +342,7 @@ export function generateStandaloneHtml(initialData?: {
     };
 
     let records = JSON.parse(localStorage.getItem('trip_records') || '[]');
+    let isSyncing = false;
 
     // 分頁切換函式
     function switchTab(tab) {
@@ -333,12 +356,10 @@ export function generateStandaloneHtml(initialData?: {
       const bCheckin = document.getElementById('tabBtnCheckin');
       const bSummary = document.getElementById('tabBtnSummary');
 
-      // 隱藏全部
       vSettings.classList.add('hidden');
       vCheckin.classList.add('hidden');
       vSummary.classList.add('hidden');
 
-      // 重設按鈕樣式
       const inactiveClass = 'py-2.5 sm:py-3 px-2 sm:px-4 rounded-xl text-center sm:text-left transition-all duration-200 flex flex-col sm:flex-row sm:items-center space-x-0 sm:space-x-2 text-slate-600 hover:bg-slate-50 font-semibold text-xs sm:text-sm';
       const activeClass = 'py-2.5 sm:py-3 px-2 sm:px-4 rounded-xl text-center sm:text-left transition-all duration-200 flex flex-col sm:flex-row sm:items-center space-x-0 sm:space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-blue-500/20';
 
@@ -431,7 +452,7 @@ export function generateStandaloneHtml(initialData?: {
     function updateMapPreview() {
       const val = document.getElementById('itemLocation').value.trim();
       const link = document.getElementById('mapPreviewLink');
-      if (!val) {
+      if (!val || val === '請手動取得GPS定位') {
         link.innerText = '填寫地點後自動生成';
         link.href = '#';
         return;
@@ -446,6 +467,86 @@ export function generateStandaloneHtml(initialData?: {
       link.innerText = url;
     }
 
+    // =========================================================
+    // 中央資料庫同步：從 Google Apps Script 讀取全體資料 (doGet)
+    // =========================================================
+    async function syncWithGoogleSheet(silent = false) {
+      if (!appSettings.gasUrl || !appSettings.gasUrl.startsWith('http')) {
+        if (!silent) {
+          alert('請先於「資料設定」輸入有效的 Google Apps Script Web App API 網址！');
+          switchTab('settings');
+        }
+        return;
+      }
+
+      const syncIcon = document.getElementById('syncIcon');
+      const syncText = document.getElementById('syncText');
+      const syncBtn = document.getElementById('syncBtn');
+
+      isSyncing = true;
+      if (syncIcon) syncIcon.className = 'text-xs inline-block animate-spin-custom';
+      if (syncText) syncText.innerText = '同步中...';
+      if (syncBtn) syncBtn.classList.add('opacity-75');
+
+      try {
+        const fetchUrl = appSettings.gasUrl + (appSettings.gasUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        const res = await fetch(fetchUrl);
+        const json = await res.json();
+
+        if (json.status === 'success' && json.data) {
+          const rawRecords = json.data.records || [];
+          records = rawRecords.reverse(); // 最新紀錄排在最前
+          localStorage.setItem('trip_records', JSON.stringify(records));
+
+          if (json.data.settings) {
+            if (json.data.settings.tripName) {
+              appSettings.tripName = json.data.settings.tripName;
+              localStorage.setItem('trip_name', appSettings.tripName);
+              document.getElementById('topTripTitle').innerText = appSettings.tripName;
+              document.getElementById('setTripName').value = appSettings.tripName;
+            }
+            if (json.data.settings.totalPeople) {
+              appSettings.totalPeople = json.data.settings.totalPeople;
+              localStorage.setItem('trip_people', appSettings.totalPeople.toString());
+              document.getElementById('topTravelersCount').innerText = appSettings.totalPeople + ' 位旅伴';
+              document.getElementById('setTotalPeople').value = appSettings.totalPeople;
+            }
+          }
+
+          renderStats();
+          renderRecords();
+
+          const now = new Date();
+          const timeStr = now.toTimeString().slice(0, 8);
+          const timeEl = document.getElementById('syncTime');
+          if (timeEl) timeEl.innerText = '(' + timeStr + ')';
+
+          const badge = document.getElementById('gasStatusBadge');
+          if (badge) {
+            badge.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700';
+            badge.innerText = '● GAS 已連線 (' + records.length + '筆)';
+          }
+
+          if (!silent) {
+            alert('🎉 成功從 Google Sheet 同步 ' + records.length + ' 筆打卡資料！');
+          }
+        } else {
+          if (!silent) alert('⚠️ 讀取 Google Sheet 失敗：' + (json.message || '格式異常'));
+        }
+      } catch (err) {
+        console.warn('Sync error:', err);
+        if (!silent) alert('⚠️ 同步失敗，請確認網路連線與 GAS 部署存取權限已設為「任何人 (Anyone)」。');
+      } finally {
+        isSyncing = false;
+        if (syncIcon) syncIcon.className = 'text-xs';
+        if (syncText) syncText.innerText = '同步/重新整理';
+        if (syncBtn) syncBtn.classList.remove('opacity-75');
+      }
+    }
+
+    // =========================================================
+    // 新增打卡：發送 POST 至 GAS，寫入 Google Sheet 中央資料庫
+    // =========================================================
     async function handleFormSubmit(e) {
       e.preventDefault();
       const itemName = document.getElementById('itemName').value.trim();
@@ -457,7 +558,7 @@ export function generateStandaloneHtml(initialData?: {
       const notes = document.getElementById('itemNotes').value.trim();
 
       let mapUrl = '';
-      if (location && location !== '無打卡地點') {
+      if (location && location !== '無打卡地點' && location !== '請手動取得GPS定位') {
         if (currentCoords && location.startsWith('GPS:')) {
           mapUrl = 'https://www.google.com/maps?q=' + currentCoords.lat + ',' + currentCoords.lng;
         } else {
@@ -465,8 +566,10 @@ export function generateStandaloneHtml(initialData?: {
         }
       }
 
+      const recId = 'rec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
       const newRecord = {
-        id: 'rec_' + Date.now(),
+        action: 'add',
+        id: recId,
         tripName: appSettings.tripName,
         time: timeVal.replace('T', ' '),
         itemName,
@@ -479,9 +582,11 @@ export function generateStandaloneHtml(initialData?: {
         createdAt: Date.now()
       };
 
+      // 1. 本地樂觀新增
       records.unshift(newRecord);
       localStorage.setItem('trip_records', JSON.stringify(records));
       renderStats();
+      renderRecords();
 
       // 重設表單欄位
       document.getElementById('itemName').value = '';
@@ -492,7 +597,7 @@ export function generateStandaloneHtml(initialData?: {
       updateMapPreview();
       initDateTime();
 
-      // 發送 GAS
+      // 2. 發送 POST 寫入 Google Sheet
       if (appSettings.gasUrl && appSettings.gasUrl.startsWith('http')) {
         try {
           fetch(appSettings.gasUrl, {
@@ -500,25 +605,50 @@ export function generateStandaloneHtml(initialData?: {
             mode: 'no-cors',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(newRecord)
+          }).then(() => {
+            // 寫入完成後，稍候自動拉取雲端最新資料
+            setTimeout(() => { syncWithGoogleSheet(true); }, 1500);
           });
         } catch (err) {
           console.warn('GAS Sync error', err);
         }
       }
 
-      if (confirm('✅ 打卡記帳已成功新增！是否立即切換至「功能3：總消費與明細」查看分攤與清單？')) {
+      if (confirm('✅ 打卡記帳已成功新增並寫入 Google Sheet！是否立即切換至「總消費與明細」查看分攤與統計？')) {
         switchTab('summary');
       }
     }
 
-    function deleteRecord(id) {
-      if (!confirm('確定要刪除這筆打卡記帳嗎？')) return;
+    // =========================================================
+    // 刪除打卡：發送 POST (action: delete) 至 GAS，自 Google Sheet 移除
+    // =========================================================
+    async function deleteRecord(id) {
+      if (!confirm('確定要刪除這筆打卡記帳嗎？此動作將同步自 Google Sheet 雲端中央資料庫刪除！')) return;
+      
+      // 本地樂觀移除
       records = records.filter(r => r.id !== id);
       localStorage.setItem('trip_records', JSON.stringify(records));
       renderStats();
       renderRecords();
+
+      // 發送刪除請求至 GAS
+      if (appSettings.gasUrl && appSettings.gasUrl.startsWith('http')) {
+        try {
+          fetch(appSettings.gasUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'delete', id: id })
+          }).then(() => {
+            setTimeout(() => { syncWithGoogleSheet(true); }, 1500);
+          });
+        } catch (err) {
+          console.warn('GAS Delete error', err);
+        }
+      }
     }
 
+    // 渲染統計數據 (Math.ceil 無條件進位均攤)
     function renderStats() {
       const total = records.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
       const count = records.length;
@@ -528,13 +658,14 @@ export function generateStandaloneHtml(initialData?: {
       const elTotal = document.getElementById('statTotalExpense');
       if (elTotal) elTotal.innerText = total.toLocaleString();
       const elRec = document.getElementById('statTotalRecords');
-      if (elRec) elRec.innerText = count;
+      if (elRec) elRec.innerText = '共 ' + count + ' 筆';
       const elPer = document.getElementById('statPerPerson');
       if (elPer) elPer.innerText = perPerson.toLocaleString();
       const elDetail = document.getElementById('statPerPersonDetail');
-      if (elDetail) elDetail.innerText = 'NT$ ' + total.toLocaleString() + ' ÷ ' + people + ' 人 (無條件進位至整數)';
+      if (elDetail) elDetail.innerText = 'NT$ ' + total.toLocaleString() + ' ÷ ' + people + ' 人 (採用 Math.ceil 避免小數糾紛)';
     }
 
+    // 渲染紀錄清單
     function renderRecords() {
       const container = document.getElementById('recordsContainer');
       const search = (document.getElementById('searchInput')?.value || '').toLowerCase();
@@ -542,9 +673,9 @@ export function generateStandaloneHtml(initialData?: {
       const filtered = records.filter(r => {
         if (!search) return true;
         return (
-          r.itemName.toLowerCase().includes(search) ||
-          r.location.toLowerCase().includes(search) ||
-          r.payer.toLowerCase().includes(search) ||
+          (r.itemName || '').toLowerCase().includes(search) ||
+          (r.location || '').toLowerCase().includes(search) ||
+          (r.payer || '').toLowerCase().includes(search) ||
           (r.notes && r.notes.toLowerCase().includes(search))
         );
       });
@@ -552,25 +683,25 @@ export function generateStandaloneHtml(initialData?: {
       document.getElementById('filteredCountBadge').innerText = filtered.length + ' 筆';
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div class="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm">尚無打卡紀錄，立即切換至「功能2：打卡與記錄」填寫第一筆！</div>';
+        container.innerHTML = '<div class="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm">尚無打卡紀錄，立即切換至「打卡與記錄」填寫第一筆！</div>';
         return;
       }
 
       container.innerHTML = filtered.map(r => {
-        const mapHtml = (r.location && r.location !== '無打卡地點')
+        const mapHtml = (r.location && r.location !== '無打卡地點' && r.location !== '請手動取得GPS定位')
           ? '<span class="flex items-center space-x-1"><span>📍</span>' + (r.mapUrl ? '<a href="' + r.mapUrl + '" target="_blank" class="text-blue-600 hover:underline font-semibold">' + r.location + ' (地圖)</a>' : '<span>' + r.location + '</span>') + '</span>'
           : '';
         const notesHtml = r.notes ? '<span class="text-slate-400 italic">📝 ' + r.notes + '</span>' : '';
-        const shareAmount = Math.ceil(r.amount / appSettings.totalPeople);
+        const shareAmount = Math.ceil((Number(r.amount) || 0) / Math.max(1, appSettings.totalPeople));
 
         return '<div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs hover:border-blue-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3">' +
           '<div class="space-y-1.5 flex-1">' +
             '<div class="flex items-center space-x-2">' +
-              '<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700">' + r.category + '</span>' +
-              '<span class="text-xs text-slate-400 font-mono">' + r.time + '</span>' +
-              '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700">' + r.payer + '</span>' +
+              '<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700">' + (r.category || '其他') + '</span>' +
+              '<span class="text-xs text-slate-400 font-mono">' + (r.time || '') + '</span>' +
+              '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700">' + (r.payer || '公費預支') + '</span>' +
             '</div>' +
-            '<div class="text-base font-bold text-slate-900">' + r.itemName + '</div>' +
+            '<div class="text-base font-bold text-slate-900">' + (r.itemName || '未命名') + '</div>' +
             '<div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">' +
               mapHtml + notesHtml +
             '</div>' +
@@ -580,7 +711,7 @@ export function generateStandaloneHtml(initialData?: {
               '<div class="text-lg sm:text-xl font-black text-slate-900 font-mono">NT$ ' + Number(r.amount).toLocaleString() + '</div>' +
               '<div class="text-[10px] text-slate-400">均攤約 NT$ ' + shareAmount + '</div>' +
             '</div>' +
-            '<button onclick="deleteRecord(\\'' + r.id + '\\')" class="p-2 text-slate-400 hover:text-rose-600 rounded-lg transition-colors" title="刪除打卡">' +
+            '<button onclick="deleteRecord(\\'' + r.id + '\\')" class="p-2 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer" title="刪除打卡">' +
               '🗑️' +
             '</button>' +
           '</div>' +
@@ -625,8 +756,14 @@ export function generateStandaloneHtml(initialData?: {
       window.open('https://line.me/R/msg/text/?' + encodeURIComponent(msg), '_blank');
     }
 
-    function shareTrackerUrl() {
-      copyStandaloneShare();
+    function testGasUrlConnection() {
+      const url = document.getElementById('setGasUrl').value.trim();
+      if (!url || !url.startsWith('http')) {
+        alert('請先輸入以 https:// 開頭的 GAS API URL！');
+        return;
+      }
+      appSettings.gasUrl = url;
+      syncWithGoogleSheet(false);
     }
 
     function saveSettings() {
@@ -648,14 +785,29 @@ export function generateStandaloneHtml(initialData?: {
       const badge = document.getElementById('gasStatusBadge');
       if (gas) {
         badge.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700';
-        badge.innerText = '● GAS 已連線';
+        badge.innerText = '● GAS 雲端連線';
       } else {
         badge.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500';
         badge.innerText = '○ 本機儲存';
       }
 
       updateShareUrlInput();
-      alert('🎉 旅遊行程資料已成功儲存！下方已生成專屬分享網址，可直接複製或 LINE 分享給旅伴一同記帳。');
+
+      // 若有 GAS，同步更新團體設定至 Google Sheet
+      if (gas && gas.startsWith('http')) {
+        fetch(gas, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'saveSettings',
+            tripName: name,
+            totalPeople: people
+          })
+        }).catch(() => {});
+      }
+
+      alert('🎉 旅遊行程與 API 設定已成功儲存！若有設定 GAS，點擊「同步/重新整理」即可載入最新資料。');
     }
 
     function loadSampleData() {
@@ -671,7 +823,7 @@ export function generateStandaloneHtml(initialData?: {
       switchTab('summary');
     }
 
-    // 啟動初始化 (載入網址分享參數、更新分享網址、拉取 GPS 定位)
+    // 啟動初始化 (載入網址分享參數、自動拉取 Google Sheet 雲端資料、拉取 GPS 定位)
     try {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('trip')) appSettings.tripName = urlParams.get('trip');
@@ -681,9 +833,15 @@ export function generateStandaloneHtml(initialData?: {
 
     initDateTime();
     renderStats();
+    renderRecords();
     updateShareUrlInput();
     fetchCurrentGps(true);
     switchTab('summary');
+
+    // 頁面一開啟時，若有 GAS 網址自動連線讀取 Google Sheet 最新資料
+    if (appSettings.gasUrl && appSettings.gasUrl.startsWith('http')) {
+      syncWithGoogleSheet(true);
+    }
   </script>
 </body>
 </html>`;
