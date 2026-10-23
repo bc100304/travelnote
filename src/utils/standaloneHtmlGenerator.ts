@@ -469,13 +469,59 @@ export function generateStandaloneHtml(initialData?: {
 
     // =========================================================
     // 中央資料庫同步：從 Google Apps Script 讀取全體資料 (doGet)
+    // 支援雙引擎：優先 fetch，失敗時自動切換 JSONP 徹底解決 Failed to fetch
     // =========================================================
+    function fetchJsonpClient(url, timeoutMs = 8000) {
+      return new Promise((resolve) => {
+        const callbackName = 'gas_cb_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        const script = document.createElement('script');
+        const sep = url.includes('?') ? '&' : '?';
+        script.src = url + sep + 'callback=' + callbackName + '&_t=' + Date.now();
+        script.async = true;
+
+        let timer = null;
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          if (script.parentNode) script.parentNode.removeChild(script);
+          try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+        };
+
+        window[callbackName] = (data) => {
+          cleanup();
+          resolve({ success: true, data });
+        };
+
+        script.onerror = () => {
+          cleanup();
+          resolve({ success: false, reason: 'login_redirect_or_blocked' });
+        };
+
+        timer = setTimeout(() => {
+          cleanup();
+          resolve({ success: false, reason: 'timeout' });
+        }, timeoutMs);
+
+        document.head.appendChild(script);
+      });
+    }
+
     async function syncWithGoogleSheet(silent = false) {
-      if (!appSettings.gasUrl || !appSettings.gasUrl.startsWith('http')) {
+      const rawUrl = (appSettings.gasUrl || '').trim();
+      if (!rawUrl || !rawUrl.startsWith('http')) {
         if (!silent) {
           alert('請先於「資料設定」輸入有效的 Google Apps Script Web App API 網址！');
           switchTab('settings');
         }
+        return;
+      }
+
+      if (rawUrl.includes('docs.google.com/spreadsheets')) {
+        if (!silent) alert('⚠️ 您輸入的是 Google 試算表本體網址，不是 Apps Script 網頁應用程式網址！\n請至試算表「擴充功能 > Apps Script > 部署 > 管理部署作業」複製結尾為 /exec 的網址。');
+        return;
+      }
+
+      if (rawUrl.endsWith('/dev') || rawUrl.includes('/dev?')) {
+        if (!silent) alert('⚠️ 您輸入的是 /dev 開發測試網址，無法跨手機連線！\n請至 Apps Script 點「部署 > 管理部署作業」，複製結尾為 /exec 的正式網址。');
         return;
       }
 
@@ -488,12 +534,31 @@ export function generateStandaloneHtml(initialData?: {
       if (syncText) syncText.innerText = '同步中...';
       if (syncBtn) syncBtn.classList.add('opacity-75');
 
-      try {
-        const fetchUrl = appSettings.gasUrl + (appSettings.gasUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
-        const res = await fetch(fetchUrl);
-        const json = await res.json();
+      let json = null;
 
-        if (json.status === 'success' && json.data) {
+      // 嘗試 1：標準 fetch
+      try {
+        const fetchUrl = rawUrl + (rawUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        const res = await fetch(fetchUrl, { method: 'GET', redirect: 'follow', cache: 'no-cache' });
+        if (res.ok) {
+          json = await res.json();
+        }
+      } catch (e1) {
+        console.warn('Fetch 失敗，嘗試切換 JSONP 雙引擎...');
+      }
+
+      // 嘗試 2：若 fetch 失敗，自動切換至 JSONP 跨網域載入
+      if (!json) {
+        const jsonpRes = await fetchJsonpClient(rawUrl, 8000);
+        if (jsonpRes && jsonpRes.success && jsonpRes.data) {
+          json = jsonpRes.data;
+        } else {
+          console.warn('JSONP 跨網域連線狀態:', jsonpRes ? jsonpRes.reason : '未成功');
+        }
+      }
+
+      try {
+        if (json && json.status === 'success' && json.data) {
           const rawRecords = json.data.records || [];
           records = rawRecords.reverse(); // 最新紀錄排在最前
           localStorage.setItem('trip_records', JSON.stringify(records));
@@ -531,11 +596,20 @@ export function generateStandaloneHtml(initialData?: {
             alert('🎉 成功從 Google Sheet 同步 ' + records.length + ' 筆打卡資料！');
           }
         } else {
-          if (!silent) alert('⚠️ 讀取 Google Sheet 失敗：' + (json.message || '格式異常'));
+          if (!silent) {
+            alert(
+              '⚠️ 無法讀取 Google Sheet (Failed to fetch)\n\n' +
+              '常見原因與解決指南：\n' +
+              '1. 【90% 最常見】部署權限未設為「所有人」：\n' +
+              '   請進入 Apps Script > 點「部署」>「管理部署作業」> 點鉛筆圖示編輯，將「誰可以存取 (Who has access)」設定為「所有人 (Anyone)」。\n\n' +
+              '2. 修改程式碼後未建立「新版本」部署：\n' +
+              '   貼上新程式碼後，必須在「管理部署作業」的「版本」下拉選單選「新版本」後按下部署。\n\n' +
+              '3. 網址必須以 /exec 結尾，不可使用 /dev。'
+            );
+          }
         }
       } catch (err) {
-        console.warn('Sync error:', err);
-        if (!silent) alert('⚠️ 同步失敗，請確認網路連線與 GAS 部署存取權限已設為「任何人 (Anyone)」。');
+        console.warn('Sync render error:', err);
       } finally {
         isSyncing = false;
         if (syncIcon) syncIcon.className = 'text-xs';

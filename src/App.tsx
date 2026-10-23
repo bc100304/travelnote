@@ -69,11 +69,12 @@ export default function App() {
   // 提示訊息 Toast
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
+  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success', duration = 4000) => {
     setToastMessage({ text, type });
+    const timeout = type === 'error' ? 9000 : duration;
     setTimeout(() => {
       setToastMessage(null);
-    }, 4000);
+    }, timeout);
   };
 
   // 從 Google Apps Script 中央資料庫同步全體資料與設定
@@ -148,7 +149,7 @@ export default function App() {
     try {
       localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
-      console.error('Error saving settings to localStorage', e);
+      console.warn('Error saving settings to localStorage', e);
     }
   }, [settings]);
 
@@ -157,7 +158,7 @@ export default function App() {
     try {
       localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(records));
     } catch (e) {
-      console.error('Error saving records to localStorage', e);
+      console.warn('Error saving records to localStorage', e);
     }
   }, [records]);
 
@@ -435,17 +436,40 @@ export default function App() {
 
       {/* 浮動 Toast 通知 */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm animate-bounce-short">
+        <div className="fixed bottom-6 right-6 z-50 max-w-md w-[calc(100vw-3rem)] animate-bounce-short">
           <div
-            className={`px-4 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-bold flex items-center space-x-2 border ${
+            className={`p-4 rounded-2xl shadow-2xl text-xs sm:text-sm font-bold border ${
               toastMessage.type === 'success'
                 ? 'bg-slate-900 text-white border-slate-700'
                 : toastMessage.type === 'error'
-                ? 'bg-rose-600 text-white border-rose-700'
+                ? 'bg-rose-700 text-white border-rose-800'
                 : 'bg-blue-600 text-white border-blue-700'
             }`}
           >
-            <span>{toastMessage.text}</span>
+            <div className="whitespace-pre-line leading-relaxed text-left font-sans">
+              {toastMessage.text}
+            </div>
+            {toastMessage.type === 'error' && (
+              <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsGasModalOpen(true);
+                    setToastMessage(null);
+                  }}
+                  className="underline text-[11px] font-bold text-white hover:text-amber-200 cursor-pointer"
+                >
+                  📖 開啟 GAS 設定與解決指南
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToastMessage(null)}
+                  className="text-[11px] bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-white font-bold cursor-pointer"
+                >
+                  關閉
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

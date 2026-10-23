@@ -119,15 +119,35 @@ export const GasTutorialModal: React.FC<GasTutorialModalProps> = ({
           {activeTab === 'tutorial' ? (
             <div className="space-y-4">
               
-              {/* 重要提示卡片 */}
-              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/90 text-amber-900 text-xs space-y-1.5">
-                <div className="flex items-center space-x-1.5 font-bold text-amber-800">
-                  <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>核心重點：部署時權限請務必設為「任何人 (Anyone)」</span>
+              {/* 🚨 Failed to fetch 快速排查錦囊 */}
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 text-xs space-y-2.5">
+                <div className="flex items-center space-x-2 font-black text-rose-900 text-sm">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span>遇見「Failed to fetch」？請確認這 3 點（99% 皆因以下造成）：</span>
                 </div>
-                <p className="text-[11px] text-amber-800/90 leading-relaxed">
-                  Google Apps Script 網頁應用程式部署時，若將「誰可以存取 (Who has access)」設定為「任何人 (Anyone)」，前端 SPA 才能在無需讓所有旅伴登入 Google 的情況下，透過 POST 請求將打卡記錄寫入你的 Google 試算表。
-                </p>
+                <div className="space-y-1.5 text-xs text-rose-900/90 leading-relaxed pl-1">
+                  <div className="flex items-start space-x-1.5">
+                    <span className="font-black text-rose-700 shrink-0">①</span>
+                    <span>
+                      <strong>【最常見】誰可以存取 (Who has access) 必須設為「所有人 (Anyone)」</strong>：<br/>
+                      若設為「僅限我自己」或「Google 帳號使用者」，Google 會強制轉跳登入頁，瀏覽器因跨域安全機制直接報錯 <code>Failed to fetch</code>。請至 Apps Script 點「部署 → 管理部署作業 → 編輯」，改為「所有人」。
+                    </span>
+                  </div>
+                  <div className="flex items-start space-x-1.5">
+                    <span className="font-black text-rose-700 shrink-0">②</span>
+                    <span>
+                      <strong>修改 Code.gs 後必須選擇「新版本 (New version)」部署</strong>：<br/>
+                      Apps Script 單純按儲存不會生效！必須在「管理部署作業」點鉛筆圖示，將「版本」切換為「新版本」後按下部署。
+                    </span>
+                  </div>
+                  <div className="flex items-start space-x-1.5">
+                    <span className="font-black text-rose-700 shrink-0">③</span>
+                    <span>
+                      <strong>網址結尾必須是 <code>/exec</code></strong>：<br/>
+                      切勿使用 <code>/dev</code> 測試網址（需開發者登入），也不要直接貼上試算表的網址。
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* 步驟清單 */}

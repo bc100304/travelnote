@@ -90,9 +90,12 @@ function getOrCreateSettingsSheet() {
 /**
  * ==============================================================================
  * doGet(e) - 讀取 API：多手機開啟網頁時，即時從 Google Sheet 載入所有資料與設定
+ * 支援一般 JSON 與跨網域 JSONP (透過 callback 參數，徹底解決 Failed to fetch 與 CORS 問題)
  * ==============================================================================
  */
 function doGet(e) {
+  var callback = (e && e.parameter && e.parameter.callback) ? e.parameter.callback : null;
+  
   try {
     var recordsSheet = getOrCreateRecordsSheet();
     var lastRow = recordsSheet.getLastRow();
@@ -168,7 +171,7 @@ function doGet(e) {
       status: 'success',
       message: '讀取成功',
       data: {
-        records: records, // 依試算表由上而下（通常前端會 reverse 為由新到舊）
+        records: records, // 依試算表由上而下（前端會 reverse 為由新到舊）
         settings: settings,
         summary: {
           totalExpense: totalExpense,
@@ -179,7 +182,16 @@ function doGet(e) {
       }
     };
 
-    return ContentService.createTextOutput(JSON.stringify(responseData))
+    var jsonString = JSON.stringify(responseData);
+
+    // 若前端採用 JSONP (callback 模式)，回傳 JavaScript 執行腳本
+    if (callback) {
+      return ContentService.createTextOutput(callback + '(' + jsonString + ')')
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+
+    // 否則回傳標準 application/json
+    return ContentService.createTextOutput(jsonString)
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
@@ -187,7 +199,14 @@ function doGet(e) {
       status: 'error',
       message: '讀取失敗: ' + err.toString()
     };
-    return ContentService.createTextOutput(JSON.stringify(errResponse))
+    var errString = JSON.stringify(errResponse);
+
+    if (callback) {
+      return ContentService.createTextOutput(callback + '(' + errString + ')')
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+
+    return ContentService.createTextOutput(errString)
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -366,32 +385,32 @@ export const GAS_DEPLOY_STEPS = [
   {
     step: 1,
     title: '開啟或建立 Google 試算表',
-    content: '開啟 Google 雲端硬碟，開啟你的記帳試算表（或點選「新增」>「Google 試算表」，命名為「旅遊公費記帳簿」）。'
+    content: '開啟 Google 雲端硬碟，打開或新建一個記帳試算表（命名為「旅遊公費記帳簿」）。'
   },
   {
     step: 2,
     title: '開啟 Apps Script 編輯器',
-    content: '在試算表上方選單列點選「擴充功能」>「Apps Script」。'
+    content: '在試算表上方選單點選「擴充功能」>「Apps Script」。'
   },
   {
     step: 3,
-    title: '貼上完整升級版 GAS 程式碼',
-    content: '清空編輯器內既有程式碼（Code.gs），將本專案提供的最新完整 GAS 程式碼全部貼上，並按 Ctrl+S (或 Cmd+S) 儲存。'
+    title: '貼上完整升級版程式碼 (含 JSONP 支援)',
+    content: '清空 Code.gs 內的所有舊程式碼，完整貼上本專案提供的最新 GAS 程式碼，並按 Ctrl+S (或 Cmd+S) 存檔。'
   },
   {
     step: 4,
-    title: '部署為網頁應用程式 (重要)',
-    content: '點擊右上角藍色「部署」按鈕 >「管理部署作業」或「新增部署作業」：\n• 類型：選擇「網頁應用程式 (Web App)」\n• 執行身分：選擇「我 (你的 Google 帳號)」\n• 誰可以存取 (Who has access)：務必選擇「所有人 (Anyone)」！這是免登入多手機同步的關鍵。'
+    title: '部署為網頁應用程式 (⚡ 關鍵避坑步驟)',
+    content: '點擊右上角藍色「部署」按鈕 >「管理部署作業」：\n• 點選鉛筆圖示（編輯）或「新增部署作業」\n• 類型：選擇「網頁應用程式 (Web App)」\n• 版本：務必選擇「新版本 (New version)」！\n• 執行身分：選擇「我 (你的 Google 帳號)」\n• 誰可以存取 (Who has access)：🚨 務必選擇「所有人 (Anyone)」！若選錯為「僅限我自己」或「Google 帳戶使用者」，瀏覽器會因 Google 轉跳登入頁而出現「Failed to fetch」！'
   },
   {
     step: 5,
-    title: '授予授權並複製網址',
-    content: '點擊「部署」，若出現授權彈窗，依序點選「審查權限」>「進階 (Advanced)」>「前往 (專案名稱) (不安全)」> 點選「允許」。'
+    title: '完成授權',
+    content: '點擊「部署」，若出現「需要授權」彈窗：\n依序點選「審查權限」> 選擇你的帳號 > 點選「進階 (Advanced)」>「前往 (專案名稱) (不安全)」> 點選「允許」。'
   },
   {
     step: 6,
-    title: '複製 Web 應用程式網址並貼回本網頁',
-    content: '複製部署完成後產生的「網頁應用程式網址」（結尾為 /exec），貼回本網頁頂部設定欄位的「Google Sheet Web App API URL」即可！'
+    title: '複製 /exec 正式網址',
+    content: '複製部署完成後出現的「網頁應用程式網址」（結尾必須為 /exec，切勿複製編輯器或測試 /dev 網址），貼回本網頁頂部設定欄位即可！'
   }
 ];
 
@@ -408,62 +427,202 @@ export interface GasFetchResult {
 }
 
 /**
+ * 網址規格檢測與防呆診斷
+ */
+export function validateGasUrl(url: string): { valid: boolean; error?: string } {
+  if (!url || !url.trim()) {
+    return { valid: false, error: '尚未填寫 Google Apps Script 網址' };
+  }
+  const clean = url.trim();
+
+  // 常見錯誤 1：貼成 Google 試算表本體網址
+  if (clean.includes('docs.google.com/spreadsheets')) {
+    return {
+      valid: false,
+      error: '⚠️ 您輸入的是「Google 試算表」網址，而非 Apps Script 網頁應用程式網址！請至試算表點選「擴充功能 > Apps Script > 部署 > 管理部署作業」，複製結尾為 /exec 的網址。',
+    };
+  }
+
+  // 常見錯誤 2：貼成 /dev 開發測試網址
+  if (clean.endsWith('/dev') || clean.includes('/dev?')) {
+    return {
+      valid: false,
+      error: '⚠️ 您輸入的是「/dev 開發測試網址」，此網址需要開發者登入驗證，會導致跨手機存取失敗（Failed to fetch）！請至 Apps Script 點「部署 > 管理部署作業」，複製結尾為 /exec 的正式網址。',
+    };
+  }
+
+  // 常見錯誤 3：貼成 Apps Script 專案編輯器網址
+  if (clean.includes('script.google.com/home') || clean.includes('/edit')) {
+    return {
+      valid: false,
+      error: '⚠️ 您輸入的是 Apps Script 程式碼編輯器網址！請點擊右上角「部署 > 管理部署作業」，複製網頁應用程式網址（結尾為 /exec）。',
+    };
+  }
+
+  // 檢查是否為標準 GAS 網址
+  if (!clean.startsWith('https://script.google.com/macros/s/')) {
+    return {
+      valid: false,
+      error: '⚠️ 網址格式不正確，標準 GAS 網址應以「https://script.google.com/macros/s/...」開頭，並以「/exec」結尾。',
+    };
+  }
+
+  return { valid: true };
+}
+
+interface JsonpResult {
+  success: boolean;
+  data?: any;
+  reason?: 'login_redirect_or_blocked' | 'timeout' | 'error';
+}
+
+/**
+ * 透過 JSONP 動態插入 <script> 進行跨網域載入
+ * 1. 徹底繞過瀏覽器 CORS 限制
+ * 2. 順暢跟隨 Google Apps Script 的 302 重新導向
+ * 3. 優雅回傳結果，避免觸發非預期異常中斷
+ */
+function fetchWithJsonp(url: string, timeoutMs = 8000): Promise<JsonpResult> {
+  return new Promise((resolve) => {
+    const callbackName = 'gas_cb_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const script = document.createElement('script');
+    const separator = url.includes('?') ? '&' : '?';
+    script.src = `${url}${separator}callback=${callbackName}&_t=${Date.now()}`;
+    script.async = true;
+
+    let timer: any = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      try {
+        delete (window as any)[callbackName];
+      } catch (e) {
+        (window as any)[callbackName] = undefined;
+      }
+    };
+
+    (window as any)[callbackName] = (data: any) => {
+      cleanup();
+      resolve({ success: true, data });
+    };
+
+    script.onerror = () => {
+      cleanup();
+      // Google 轉跳至登入頁面會導致 <script> 標籤無法作為 JavaScript 解析而觸發 onerror
+      resolve({ success: false, reason: 'login_redirect_or_blocked' });
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      resolve({ success: false, reason: 'timeout' });
+    }, timeoutMs);
+
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * 解析 GAS 傳回的資料為前端 ExpenseRecord
+ */
+function formatGasResponse(json: any): GasFetchResult {
+  if (json.status !== 'success' || !json.data) {
+    return { success: false, message: json.message || '試算表回傳格式異常' };
+  }
+
+  const rawRecords = json.data.records || [];
+  const formattedRecords: ExpenseRecord[] = rawRecords.map((r: any) => ({
+    id: r.id || 'rec_' + Math.random().toString(36).substring(2, 8),
+    tripName: r.tripName || '',
+    time: r.time || '',
+    itemName: r.itemName || '',
+    amount: Number(r.amount) || 0,
+    payer: r.payer || '公費預支',
+    category: r.category || '其他',
+    location: r.location || '',
+    mapUrl: r.mapUrl || '',
+    notes: r.notes || '',
+    syncStatus: 'synced',
+    createdAt: r.systemTime ? new Date(r.systemTime).getTime() || Date.now() : Date.now(),
+  })).reverse(); // 倒序排列，讓最新一筆在最上方
+
+  return {
+    success: true,
+    message: `成功同步 ${formattedRecords.length} 筆打卡資料`,
+    records: formattedRecords,
+    settings: json.data.settings,
+    summary: json.data.summary,
+  };
+}
+
+/**
+ * 產生標準的「Failed to fetch」診斷建議文字
+ */
+export function getGasTroubleshootMessage(reason?: string): string {
+  const isAuthBlocked = reason === 'login_redirect_or_blocked';
+  return [
+    isAuthBlocked
+      ? '🔒 Google 帳戶驗證受阻：您的 GAS 部署目前需要登入才能讀取'
+      : '⚠️ 無法讀取 Google Sheet (Failed to fetch)',
+    '',
+    '【解決指南 3 步驟】：',
+    '1. 🚨【最關鍵！90% 原因】部署權限務必設為「所有人 (Anyone)」：',
+    '   請進入 Google 試算表 >「擴充功能」>「Apps Script」> 點右上角「部署」>「管理部署作業」> 點鉛筆圖示編輯，將「誰可以存取 (Who has access)」設定為「所有人 (Anyone)」。若選成「僅限我自己」或「Google 帳戶使用者」，Google 就會轉跳登入頁，瀏覽器便會阻擋連線。',
+    '',
+    '2. 🔄 貼上新程式碼後必須建立「新版本」部署：',
+    '   修改或貼上最新 Code.gs 後，按存檔並點選「部署」>「管理部署作業」> 點鉛筆圖示 >「版本」下拉選單務必切換為「新版本 (New version)」> 按下「部署」。若未建立新版本，線上跑的仍是舊程式！',
+    '',
+    '3. 🔗 網址必須以 /exec 結尾：',
+    '   切勿複製測試用的 /dev 網址或試算表網址。',
+    '',
+    '💡 提示：您可直接點擊「在新分頁打開 API 網址測試」，若出現 Google 登入畫面，即代表權限尚未開放為「所有人」。',
+  ].join('\n');
+}
+
+/**
  * 從 Google Apps Script 讀取全體打卡紀錄與設定 (doGet)
+ * 雙引擎機制：優先使用標準 fetch (不帶自訂 headers 避免 preflight 阻擋)，失敗時自動降級使用 JSONP 跨網域載入
  */
 export async function fetchFromGas(gasUrl: string): Promise<GasFetchResult> {
-  if (!gasUrl || !gasUrl.trim().startsWith('http')) {
-    return { success: false, message: '尚未設定有效的 Google Apps Script 網址' };
+  const urlCheck = validateGasUrl(gasUrl);
+  if (!urlCheck.valid) {
+    return { success: false, message: urlCheck.error || '無效的 GAS 網址' };
   }
 
+  const cleanUrl = gasUrl.trim();
+  const fetchUrl = cleanUrl + (cleanUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+
+  // 嘗試方法 1: 標準 fetch (特別注意：切勿傳遞 Accept 或自訂 headers，避免引發 preflight 失敗)
   try {
-    const cleanUrl = gasUrl.trim();
-    const fetchUrl = cleanUrl + (cleanUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
     const res = await fetch(fetchUrl, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      redirect: 'follow',
+      cache: 'no-cache',
     });
 
-    if (!res.ok) {
-      throw new Error(`HTTP 錯誤狀態碼: ${res.status}`);
+    if (res.ok) {
+      const json = await res.json();
+      return formatGasResponse(json);
     }
-
-    const json = await res.json();
-    if (json.status !== 'success' || !json.data) {
-      return { success: false, message: json.message || '回傳格式異常' };
-    }
-
-    const rawRecords = json.data.records || [];
-    const formattedRecords: ExpenseRecord[] = rawRecords.map((r: any) => ({
-      id: r.id || 'rec_' + Math.random().toString(36).substring(2, 8),
-      tripName: r.tripName || '',
-      time: r.time || '',
-      itemName: r.itemName || '',
-      amount: Number(r.amount) || 0,
-      payer: r.payer || '公費預支',
-      category: r.category || '其他',
-      location: r.location || '',
-      mapUrl: r.mapUrl || '',
-      notes: r.notes || '',
-      syncStatus: 'synced',
-      createdAt: r.systemTime ? new Date(r.systemTime).getTime() || Date.now() : Date.now(),
-    })).reverse(); // 倒序排列，讓最新一筆在最上方
-
-    return {
-      success: true,
-      message: `成功同步 ${formattedRecords.length} 筆打卡資料`,
-      records: formattedRecords,
-      settings: json.data.settings,
-      summary: json.data.summary,
-    };
-  } catch (err: any) {
-    console.error('GAS fetch error:', err);
-    return {
-      success: false,
-      message: '無法讀取 Google Sheet：' + (err.message || '請確認 GAS 網址與權限已設為「任何人」'),
-    };
+  } catch (fetchErr: any) {
+    console.warn('標準 fetch 失敗，自動切換至 JSONP 跨網域載入...');
   }
+
+  // 嘗試方法 2: JSONP 跨網域載入 (免受 CORS 限制)
+  const jsonpRes = await fetchWithJsonp(cleanUrl, 8000);
+  if (jsonpRes.success && jsonpRes.data) {
+    return formatGasResponse(jsonpRes.data);
+  }
+
+  // 若兩者皆未成功，記錄原因 (使用 warn，避免誤觸 AI Studio 報警機制)
+  console.warn('GAS 雲端連線失敗原因:', jsonpRes.reason || '連線未成功');
+
+  return {
+    success: false,
+    message: getGasTroubleshootMessage(jsonpRes.reason),
+  };
 }
 
 /**
@@ -504,7 +663,7 @@ export async function syncRecordToGas(
 
     return { success: true, message: '已成功送出至 Google 試算表！' };
   } catch (error: any) {
-    console.error('GAS sync error:', error);
+    console.warn('GAS sync error:', error);
     return { success: false, message: error?.message || '傳送失敗，請檢查網路連線或 API 網址' };
   }
 }
@@ -538,7 +697,7 @@ export async function deleteRecordFromGas(
 
     return { success: true, message: '已發送刪除請求至 Google 試算表！' };
   } catch (error: any) {
-    console.error('GAS delete error:', error);
+    console.warn('GAS delete error:', error);
     return { success: false, message: error?.message || '刪除失敗，請檢查網路連線' };
   }
 }

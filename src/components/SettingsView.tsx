@@ -18,7 +18,8 @@ import {
   Copy,
   Check,
   QrCode,
-  Smartphone
+  Smartphone,
+  ExternalLink
 } from 'lucide-react';
 import { TripSettings } from '../types';
 import { testGasConnection } from '../utils/gasScript';
@@ -341,34 +342,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="w-full px-3.5 py-3 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono"
                   />
                 </div>
-                <div className="flex items-center justify-between mt-2">
+
+                {/* 即時網址格式偵測與提示 */}
+                {formData.gasApiUrl && formData.gasApiUrl.includes('docs.google.com/spreadsheets') && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] leading-relaxed flex items-start space-x-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>⚠️ 偵測到您貼上的是 Google 試算表本體網址！請至試算表「擴充功能 → Apps Script → 部署 → 管理部署作業」，複製結尾為 <code>/exec</code> 的網址。</span>
+                  </div>
+                )}
+                {formData.gasApiUrl && (formData.gasApiUrl.endsWith('/dev') || formData.gasApiUrl.includes('/dev?')) && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] leading-relaxed flex items-start space-x-1.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>⚠️ 偵測到網址結尾為 <code>/dev</code>（測試版）！此網址需要登入，會導致 cross-origin 失敗（Failed to fetch）。請在 Apps Script 點「部署 → 管理部署作業」，複製結尾為 <code>/exec</code> 的正式網址。</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
                   <span className="text-[11px] text-slate-400">
                     設定值將自動儲存於瀏覽器 localStorage
                   </span>
-                  <button
-                    type="button"
-                    onClick={handleTestGas}
-                    disabled={isTestingGas || !formData.gasApiUrl}
-                    className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center space-x-1.5 disabled:opacity-50 transition-colors cursor-pointer"
-                  >
-                    {isTestingGas ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
-                        <span>連線測試中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Link2 className="w-3 h-3 text-slate-500" />
-                        <span>連線測試 (Ping)</span>
-                      </>
+                  <div className="flex items-center space-x-2">
+                    {formData.gasApiUrl && formData.gasApiUrl.startsWith('http') && (
+                      <a
+                        href={formData.gasApiUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold flex items-center space-x-1 transition-colors"
+                        title="在新分頁開啟測試：若顯示 Google 登入頁面，代表尚未設為「所有人」"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                        <span>新分頁開啟</span>
+                      </a>
                     )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleTestGas}
+                      disabled={isTestingGas || !formData.gasApiUrl}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center space-x-1.5 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      {isTestingGas ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                          <span>連線測試中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Link2 className="w-3 h-3 text-slate-500" />
+                          <span>連線測試 (Ping)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {testResult && (
                 <div
-                  className={`p-3 rounded-2xl text-xs flex items-start space-x-2.5 ${
+                  className={`p-3.5 rounded-2xl text-xs flex items-start space-x-2.5 ${
                     testResult.success
                       ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                       : 'bg-rose-50 text-rose-800 border border-rose-200'
@@ -379,7 +409,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   ) : (
                     <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   )}
-                  <div className="leading-relaxed">{testResult.message}</div>
+                  <div className="leading-relaxed flex-1">
+                    <div className="whitespace-pre-line font-sans">{testResult.message}</div>
+                    {!testResult.success && (
+                      <div className="mt-2.5 pt-2 border-t border-rose-200/60 flex items-center space-x-3">
+                        <button
+                          type="button"
+                          onClick={onOpenGasTutorial}
+                          className="font-bold underline text-rose-900 hover:text-rose-950 text-[11px] cursor-pointer"
+                        >
+                          📖 查看 3 步驟權限解鎖教學
+                        </button>
+                        {formData.gasApiUrl && formData.gasApiUrl.startsWith('http') && (
+                          <a
+                            href={formData.gasApiUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-bold underline text-rose-900 hover:text-rose-950 text-[11px] inline-flex items-center space-x-0.5"
+                          >
+                            <span>在新分頁打開驗證</span>
+                            <ExternalLink className="w-3 h-3 ml-0.5" />
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
